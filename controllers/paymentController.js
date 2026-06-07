@@ -1,36 +1,40 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const Order = require('../models/Order');
+const { buildOrderPayload, persistOrder } = require('./orderController');
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
+// Creates a Razorpay order from the cart WITHOUT persisting our own Order.
+// The total is recomputed server-side so the amount Razorpay charges is the
+// source of truth; the local order is only written after payment is verified.
 exports.createRazorpayOrder = async (req, res) => {
   try {
-    const { orderId, amount } = req.body;
-    const options = {
-      amount: Math.round(amount * 100),
+    const payload = await buildOrderPayload(req.body);
+    const razorpayOrder = await razorpay.orders.create({
+      amount: Math.round(payload.total * 100),
       currency: 'INR',
-      receipt: orderId,
-      notes: { orderId }
-    };
-    const razorpayOrder = await razorpay.orders.create(options);
-    const order = await Order.findOne({ orderId });
-    if (order) {
-      order.razorpayOrderId = razorpayOrder.id;
-      await order.save();
-    }
-    res.json({ razorpayOrderId: razorpayOrder.id, amount: razorpayOrder.amount, currency: razorpayOrder.currency, keyId: process.env.RAZORPAY_KEY_ID });
+      receipt: `rcpt_${Date.now()}`
+    });
+    res.json({
+      razorpayOrderId: razorpayOrder.id,
+      amount: razorpayOrder.amount,
+      currency: razorpayOrder.currency,
+      keyId: process.env.RAZORPAY_KEY_ID
+    });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.status || 500).json({ message: err.message });
   }
 };
 
 exports.verifyPayment = async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderData } = req.body;
+
+    // 1. Signature check — proves Razorpay (not the client) reported the payment.
     const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -39,17 +43,34 @@ exports.verifyPayment = async (req, res) => {
     if (expectedSignature !== razorpay_signature) {
       return res.status(400).json({ success: false, message: 'Payment verification failed' });
     }
-    const order = await Order.findOne({ orderId });
-    if (order) {
-      order.razorpayPaymentId = razorpay_payment_id;
-      order.razorpaySignature = razorpay_signature;
-      order.paymentStatus = 'paid';
-      order.orderStatus = 'confirmed';
-      await order.save();
+
+    // 2. Confirm Razorpay actually captured this payment for the expected amount.
+    const payload = await buildOrderPayload(orderData);
+    const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
+    if (rzpOrder.amount_paid < Math.round(payload.total * 100)) {
+      return res.status(400).json({ success: false, message: 'Payment amount mismatch' });
     }
-    res.json({ success: true, message: 'Payment verified successfully' });
+
+    // 3. Idempotency — if this payment was already recorded, return that order.
+    const existing = await Order.findOne({ razorpayPaymentId: razorpay_payment_id });
+    if (existing) {
+      return res.json({ success: true, orderId: existing.orderId, message: 'Payment already verified' });
+    }
+
+    // 4. Only now does the order become real.
+    const order = await persistOrder(payload, {
+      user: req.user?._id,
+      paymentMethod: 'razorpay',
+      paymentStatus: 'paid',
+      orderStatus: 'confirmed',
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature
+    });
+
+    res.json({ success: true, orderId: order.orderId, message: 'Payment verified successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.status || 500).json({ message: err.message });
   }
 };
 

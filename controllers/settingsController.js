@@ -15,7 +15,7 @@ exports.updateSettings = async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
-    const fields = ['storeName', 'storeTagline', 'storeEmail', 'storePhone', 'storeAddress', 'codEnabled', 'razorpayKeyId', 'metaDescription', 'shippingCharge', 'theme'];
+    const fields = ['storeName', 'storeTagline', 'storeEmail', 'storePhone', 'storeAddress', 'codEnabled', 'razorpayKeyId', 'metaDescription', 'shippingCharge', 'codCharge', 'theme'];
     fields.forEach(f => { if (req.body[f] !== undefined) settings[f] = req.body[f]; });
     if (req.body.socialLinks !== undefined) {
       try {

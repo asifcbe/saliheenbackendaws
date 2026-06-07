@@ -17,7 +17,8 @@ const settingsSchema = new mongoose.Schema({
   },
   metaDescription: String,
   favicon: String,
-  shippingCharge: { type: Number, default: 0 },
+  shippingCharge: { type: Number, default: 0 }, // charge for online-paid orders (0 = free)
+  codCharge: { type: Number, default: 100 },    // extra charge added for Cash on Delivery
   theme: { type: String, default: 'midnight-gold' }
 }, { timestamps: true });
 

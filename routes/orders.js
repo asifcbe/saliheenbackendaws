@@ -1,20 +1,6 @@
 const router = require('express').Router();
 const { createOrder, getOrders, getMyOrders, getOrder, getOrderByOrderId, getOrdersByPhone, updateOrderStatus, getOrderStats, deleteOrder, resetAllOrders } = require('../controllers/orderController');
-const { protect, adminOnly } = require('../middleware/auth');
-
-const optionalAuth = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (token) {
-    const jwt = require('jsonwebtoken');
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      require('../models/User').findById(decoded.id).select('-password').then(user => {
-        req.user = user;
-        next();
-      });
-    } catch { next(); }
-  } else next();
-};
+const { protect, adminOnly, optionalAuth } = require('../middleware/auth');
 
 router.post('/', optionalAuth, createOrder);
 router.get('/', protect, adminOnly, getOrders);
